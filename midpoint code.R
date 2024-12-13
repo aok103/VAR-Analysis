@@ -10,7 +10,7 @@ summary(file_2004_05)
 summary(file_2019_20)
 head(file_2004_05)
 head(file_2019_20)
-#select relevant columns (e.g., goals, results, and referee decisions)
+#select relevant columns (goals, results, and referee decisions)
 data_2004 <- file_2004_05 %>% select(Div, Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, HR, AR, HY, AY, HF, AF, Referee)
 data_2019 <- file_2019_20 %>% select(Div, Date, HomeTeam, AwayTeam, FTHG, FTAG, FTR, HR, AR, HY, AY, HF, AF, Referee)
 #preprocessing: Handle missing data
