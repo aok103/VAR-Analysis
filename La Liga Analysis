@@ -1,0 +1,116 @@
+# LA LIGA (SP1 - Name of Dataset) – VAR IMPACT ANALYSIS
+
+
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+
+#Combine all SP1 season files
+sp1_files <- list.files(pattern = "^SP1.*\\.csv$")
+laliga <- sp1_files %>%
+  lapply(read.csv, stringsAsFactors = FALSE) %>%
+  bind_rows()
+
+write.csv(laliga, "LaLiga_AllSeasons.csv", row.names = FALSE)
+
+#Clean & prepare
+laliga$Date <- dmy(laliga$Date)
+laliga <- laliga %>% drop_na(HomeTeam, AwayTeam, FTHG, FTAG)
+
+names(laliga)[names(laliga) == "FTHG"] <- "HomeGoals"
+names(laliga)[names(laliga) == "FTAG"] <- "AwayGoals"
+
+laliga$Season <- ifelse(month(laliga$Date) >= 7,
+                        paste(year(laliga$Date), year(laliga$Date) + 1, sep = "-"),
+                        paste(year(laliga$Date) - 1, year(laliga$Date), sep = "-"))
+
+laliga <- laliga %>%
+  mutate(
+    TotalGoals = HomeGoals + AwayGoals,
+    HomeResult = case_when(
+      HomeGoals > AwayGoals ~ "Win",
+      HomeGoals < AwayGoals ~ "Loss",
+      TRUE ~ "Draw"
+    ),
+    VAR_Period = ifelse(Season < "2018-2019", "Pre-VAR", "Post-VAR")
+  )
+
+
+# VAR COMPARISON PLOTS
+
+
+# Match Outcomes
+ggplot(laliga, aes(x = HomeResult, fill = HomeResult)) +
+  geom_bar() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "La Liga: Match Outcomes (Pre vs Post VAR)",
+       x = "Home Result", y = "Match Count") +
+  theme_minimal()
+
+#Average Goals per Match (Bar)
+avg_goals_var <- laliga %>%
+  group_by(VAR_Period) %>%
+  summarise(AvgGoals = mean(TotalGoals, na.rm = TRUE))
+
+ggplot(avg_goals_var, aes(x = VAR_Period, y = AvgGoals, fill = VAR_Period)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "La Liga: Avg Goals per Match (Pre vs Post VAR)",
+       x = "VAR Period", y = "Average Goals per Match") +
+  theme_minimal()
+
+#Home Goals Density by Result
+ggplot(laliga, aes(x = HomeGoals, colour = HomeResult)) +
+  geom_density(linewidth = 1.2) +
+  facet_wrap(~VAR_Period) +
+  labs(title = "La Liga: Home Goals by Result (Pre vs Post VAR)",
+       x = "Goals", y = "Density") +
+  theme_minimal()
+
+#Total Home vs Away Goals
+goals_period <- laliga %>%
+  group_by(VAR_Period) %>%
+  summarise(HomeGoals = sum(HomeGoals), AwayGoals = sum(AwayGoals)) %>%
+  pivot_longer(cols = c(HomeGoals, AwayGoals), names_to = "GoalType", values_to = "Goals")
+
+ggplot(goals_period, aes(x = VAR_Period, y = Goals, fill = GoalType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "La Liga: Total Home vs Away Goals (Pre vs Post VAR)",
+       x = "VAR Period", y = "Total Goals") +
+  theme_minimal()
+
+#Avg Goals per Team (Faceted)
+team_avg_var <- laliga %>%
+  group_by(HomeTeam, VAR_Period) %>%
+  summarise(Home = mean(HomeGoals, na.rm = TRUE)) %>%
+  inner_join(
+    laliga %>% group_by(AwayTeam, VAR_Period) %>%
+      summarise(Away = mean(AwayGoals, na.rm = TRUE)),
+    by = c("HomeTeam" = "AwayTeam", "VAR_Period")
+  ) %>%
+  mutate(Avg = Home + Away)
+
+ggplot(team_avg_var, aes(x = reorder(HomeTeam, Avg), y = Avg)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  coord_flip() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "La Liga: Avg Goals per Team (Pre vs Post VAR)",
+       x = "Team", y = "Avg Goals") +
+  theme_minimal()
+
+#Correlation Heatmaps
+pre_var <- laliga %>%
+  filter(VAR_Period == "Pre-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+post_var <- laliga %>%
+  filter(VAR_Period == "Post-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+par(mfrow = c(1, 2))
+corrplot(cor(pre_var), method = "color", type = "upper",
+         tl.col = "black", title = "Pre-VAR Correlation", mar = c(0,0,1,0))
+corrplot(cor(post_var), method = "color", type = "upper",
+         tl.col = "black", title = "Post-VAR Correlation", mar = c(0,0,1,0))
+#After VAR was introduced in 2018–2019, the average number of goals per match in La Liga showed a noticeable drop. The distribution of match outcomes and scoring patterns also became slightly more conservative, possibly due to increased oversight on goal-validating decisions. While most correlations between match stats remained stable, there is evidence that VAR may have had a dampening effect on goal scoring.
