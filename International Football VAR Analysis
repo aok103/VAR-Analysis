@@ -1,0 +1,114 @@
+#VAR Impact on Penalties - KDD Process & VAR Milestones
+
+
+#LOAD LIBRARIES
+
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+
+#DATA SELECTION & PREPROCESSING
+ 
+
+#Load datasets
+results <- read.csv("results.csv")
+goals <- read.csv("goalscorers.csv")
+
+#Convert 'date' to Date format and extract year
+results$date <- as.Date(results$date)
+goals$date <- as.Date(goals$date)
+
+results$year <- year(results$date)
+goals$year <- year(goals$date)
+
+
+#TRANSFORMATION
+
+
+#add VAR Period column
+results$VAR_Period <- case_when(
+  results$tournament == "Confederations Cup" & results$year == 2017 ~ "Post-VAR",
+  results$year >= 2018 ~ "Post-VAR",
+  TRUE ~ "Pre-VAR"
+)
+
+#count penalty goals per year
+penalty_trends <- goals %>%
+  filter(penalty == TRUE) %>%
+  group_by(year) %>%
+  summarise(PenaltyGoals = n(), .groups = "drop")
+
+#total goals per year
+total_goals_by_year <- goals %>%
+  group_by(year) %>%
+  summarise(TotalGoals = n(), .groups = "drop")
+
+#join and calculate penalty rate
+penalty_ratio <- total_goals_by_year %>%
+  left_join(penalty_trends, by = "year") %>%
+  mutate(
+    PenaltyGoals = ifelse(is.na(PenaltyGoals), 0, PenaltyGoals),
+    PenaltyRate = PenaltyGoals / TotalGoals
+  )
+
+
+#PENALTY TREND PLOT (WITH VAR MILESTONES)
+
+penalty_ratio_filtered <- penalty_ratio %>% filter(year >= 2005)
+
+ggplot(penalty_ratio_filtered, aes(x = year, y = PenaltyRate)) +
+  geom_line(color = "darkred", size = 1.2) +
+  geom_point(color = "darkred") +
+  geom_vline(xintercept = 2017, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 2018, linetype = "dashed", color = "blue") +
+  annotate("text", x = 2017, y = max(penalty_ratio_filtered$PenaltyRate) * 0.95,
+           label = "2017 Confederations Cup", color = "red", angle = 90, vjust = -0.5) +
+  annotate("text", x = 2018, y = max(penalty_ratio_filtered$PenaltyRate) * 0.95,
+           label = "2018 FIFA World Cup", color = "blue", angle = 90, vjust = -0.5) +
+  labs(
+    title = "Proportion of Goals from Penalties (2005–Present)",
+    x = "Year",
+    y = "Penalty Goals / Total Goals"
+  ) +
+  theme_minimal()
+
+
+#DATA MINING: PENALTIES PER MATCH
+
+
+#count penalties per match
+penalty_goals_match <- goals %>%
+  filter(penalty == TRUE) %>%
+  group_by(date, home_team, away_team) %>%
+  summarise(PenaltyGoals = n(), .groups = "drop")
+
+#merge penalty goals into results
+results_with_penalties <- results %>%
+  left_join(penalty_goals_match, by = c("date", "home_team", "away_team")) %>%
+  mutate(PenaltyGoals = ifelse(is.na(PenaltyGoals), 0, PenaltyGoals))
+
+
+#EVALUATION & EXPORT
+
+
+penalty_summary <- results_with_penalties %>%
+  group_by(VAR_Period) %>%
+  summarise(
+    AvgPenaltiesPerMatch = mean(PenaltyGoals, na.rm = TRUE),
+    TotalPenalties = sum(PenaltyGoals),
+    TotalMatches = n(),
+    .groups = "drop"
+  )
+
+print(penalty_summary)
+
+#save for Tableau or reporting
+write.csv(penalty_summary, "AvgPenalties_VAR_Period.csv", row.names = FALSE)
+
+#optional: Bar chart of penalties per match
+ggplot(penalty_summary, aes(x = VAR_Period, y = AvgPenaltiesPerMatch, fill = VAR_Period)) +
+  geom_bar(stat = "identity", width = 0.5) +
+  labs(title = "Average Penalties Per Match\nPre-VAR vs Post-VAR",
+       x = "VAR Period", y = "Avg Penalties per Match") +
+  theme_minimal()
