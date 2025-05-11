@@ -1,0 +1,159 @@
+library(tidyverse)
+library(readr)
+library(lubridate)
+
+# Load & clean each league
+load_league <- function(filename, league_name, var_start_season) {
+  message(paste("Loading", league_name))
+  
+  df <- read_csv(filename, show_col_types = FALSE, na = c("", "NA", "?")) %>%
+    mutate(
+      Date = suppressWarnings(dmy(as.character(Date))),
+      League = league_name
+    )
+  
+  if (all(c("FTHG", "FTAG") %in% names(df))) {
+    df <- df %>%
+      mutate(
+        HomeGoals = as.numeric(FTHG),
+        AwayGoals = as.numeric(FTAG)
+      )
+  } else {
+    stop(paste("❌", league_name, "is missing FTHG/FTAG."))
+  }
+  
+  df <- df %>%
+    filter(!is.na(Date), !is.na(HomeGoals), !is.na(AwayGoals)) %>%
+    mutate(
+      TotalGoals = HomeGoals + AwayGoals,
+      Season = if_else(month(Date) >= 7,
+                       paste(year(Date), year(Date) + 1, sep = "-"),
+                       paste(year(Date) - 1, year(Date), sep = "-")),
+      VAR_Period = if_else(Season >= var_start_season, "Post-VAR", "Pre-VAR")
+    ) %>%
+    filter(!is.na(Season))
+  
+  message(paste0("✅ ", league_name, ": ", nrow(df), " valid rows.\n"))
+  return(df)
+}
+
+# Load 4 leagues with correct VAR start seasons
+epl        <- load_league("PremierLeague_AllSeasons.csv", "Premier League", "2019-2020")
+bundesliga <- load_league("Bundesliga_AllSeasons.csv", "Bundesliga", "2017-2018")
+laliga     <- load_league("LaLiga_AllSeasons.csv", "La Liga", "2018-2019")
+ligue1     <- load_league("Ligue1_AllSeasons.csv", "Ligue 1", "2018-2019")
+
+# Combine into one dataset
+all_leagues <- bind_rows(epl, bundesliga, laliga, ligue1)
+
+
+# Chart 2: Pre-VAR vs Post-VAR Comparison (Bar Chart)
+avg_var_period <- all_leagues %>%
+  group_by(League, VAR_Period) %>%
+  summarise(AvgGoals = mean(TotalGoals, na.rm = TRUE), .groups = "drop")
+
+ggplot(avg_var_period, aes(x = League, y = AvgGoals, fill = VAR_Period)) +
+  geom_col(position = "dodge") +
+  labs(title = "Pre-VAR vs Post-VAR: Avg Goals per Match",
+       x = "League", y = "Avg Goals per Match") +
+  theme_minimal()
+
+# 🔍 Step 1: Check if card columns exist
+card_columns <- c("HY", "AY", "HR", "AR")
+missing_cols <- setdiff(card_columns, names(all_leagues))
+
+if (length(missing_cols) > 0) {
+  cat("⚠️ Missing columns:", paste(missing_cols, collapse = ", "), "\n")
+} else {
+  # ✅ Step 2: Compute total cards and summarize
+  card_data <- all_leagues %>%
+    mutate(
+      YellowCards = as.numeric(HY) + as.numeric(AY),
+      RedCards = as.numeric(HR) + as.numeric(AR)
+    ) %>%
+    filter(!is.na(YellowCards), !is.na(RedCards))
+  
+  # 🔢 Step 3: Average cards per match by League & VAR Period
+  card_summary <- card_data %>%
+    group_by(League, VAR_Period) %>%
+    summarise(
+      AvgYellowCards = mean(YellowCards, na.rm = TRUE),
+      AvgRedCards = mean(RedCards, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # 📊 Step 4: Plot Yellow Cards
+  ggplot(card_summary, aes(x = League, y = AvgYellowCards, fill = VAR_Period)) +
+    geom_col(position = "dodge") +
+    labs(title = "Avg Yellow Cards per Match: Pre-VAR vs Post-VAR",
+         y = "Avg Yellow Cards", x = "League") +
+    theme_minimal()
+  
+  # 📊 Step 5: Plot Red Cards
+  ggplot(card_summary, aes(x = League, y = AvgRedCards, fill = VAR_Period)) +
+    geom_col(position = "dodge") +
+    labs(title = "Avg Red Cards per Match: Pre-VAR vs Post-VAR",
+         y = "Avg Red Cards", x = "League") +
+    theme_minimal()
+}
+
+write_csv(avg_season, "AvgGoals_By_Season.csv")
+
+write_csv(avg_var_period, "AvgGoals_VAR_Period.csv")
+
+write_csv(card_summary, "AvgCards_VAR_Period.csv")
+
+write_csv(all_leagues, "All_Leagues_Cleaned.csv")
+
+
+avg_season <- avg_season %>%
+  rename(
+    League = League,
+    Season = Season,
+    `Average Goals Per Match` = AvgGoals
+  )
+
+write_csv(avg_season, "AvgGoals_By_Season.csv")
+
+
+avg_var_period <- avg_var_period %>%
+  rename(
+    League = League,
+    `VAR Period` = VAR_Period,
+    `Average Goals Per Match` = AvgGoals
+  )
+
+write_csv(avg_var_period, "AvgGoals_VAR_Period.csv")
+
+
+card_summary <- card_summary %>%
+  rename(
+    League = League,
+    `VAR Period` = VAR_Period,
+    `Average Yellow Cards` = AvgYellowCards,
+    `Average Red Cards` = AvgRedCards
+  )
+
+write_csv(card_summary, "AvgCards_VAR_Period.csv")
+
+
+all_leagues_export <- all_leagues %>%
+  select(Date, Season, League, VAR_Period, HomeTeam, AwayTeam,
+         HomeGoals, AwayGoals, TotalGoals, HY, AY, HR, AR) %>%
+  rename(
+    `Match Date` = Date,
+    `Season` = Season,
+    `League` = League,
+    `VAR Period` = VAR_Period,
+    `Home Team` = HomeTeam,
+    `Away Team` = AwayTeam,
+    `Home Goals` = HomeGoals,
+    `Away Goals` = AwayGoals,
+    `Total Goals` = TotalGoals,
+    `Home Yellow Cards` = HY,
+    `Away Yellow Cards` = AY,
+    `Home Red Cards` = HR,
+    `Away Red Cards` = AR
+  )
+
+write_csv(all_leagues_export, "AllLeagues_Cleaned.csv")
