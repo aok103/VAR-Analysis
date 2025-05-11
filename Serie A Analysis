@@ -1,0 +1,130 @@
+#SERIE A (I1 - Name of Dataset) – VAR IMPACT ANALYSIS
+
+
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+library(readr)
+
+#Merge all I1 files safely
+i1_files <- list.files(pattern = "^I1.*\\.csv$")
+
+seriea <- i1_files %>%
+  lapply(function(file) {
+    read_csv(file, show_col_types = FALSE) %>%
+      mutate(across(everything(), as.character))
+  }) %>%
+  bind_rows()
+
+write_csv(seriea, "SerieA_AllSeasons_RAW.csv")
+
+#Convert to correct types
+seriea <- seriea %>%
+  mutate(
+    FTHG = as.numeric(FTHG),
+    FTAG = as.numeric(FTAG),
+    HTHG = as.numeric(HTHG),
+    HTAG = as.numeric(HTAG),
+    HS   = as.numeric(HS),
+    Date = dmy(Date)
+  ) %>%
+  drop_na(HomeTeam, AwayTeam, FTHG, FTAG)
+
+#Feature engineering
+seriea <- seriea %>%
+  rename(HomeGoals = FTHG, AwayGoals = FTAG) %>%
+  mutate(
+    Season = ifelse(month(Date) >= 7,
+                    paste(year(Date), year(Date) + 1, sep = "-"),
+                    paste(year(Date) - 1, year(Date), sep = "-")),
+    TotalGoals = HomeGoals + AwayGoals,
+    HomeResult = case_when(
+      HomeGoals > AwayGoals ~ "Win",
+      HomeGoals < AwayGoals ~ "Loss",
+      TRUE ~ "Draw"
+    ),
+    VAR_Period = ifelse(Season < "2017-2018", "Pre-VAR", "Post-VAR")
+  )
+
+write_csv(seriea, "SerieA_AllSeasons.csv")
+
+
+# VAR COMPARISON PLOTS
+
+
+# 1. Match Outcome Comparison
+ggplot(seriea, aes(x = HomeResult, fill = HomeResult)) +
+  geom_bar() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Serie A: Match Outcomes (Pre vs Post VAR)",
+       x = "Home Result", y = "Match Count") +
+  theme_minimal()
+
+# 2. Avg Goals per Match by Period
+avg_goals_var <- seriea %>%
+  group_by(VAR_Period) %>%
+  summarise(AvgGoals = mean(TotalGoals, na.rm = TRUE))
+
+ggplot(avg_goals_var, aes(x = VAR_Period, y = AvgGoals, fill = VAR_Period)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Serie A: Avg Goals per Match (Pre vs Post VAR)",
+       x = "VAR Period", y = "Avg Goals") +
+  theme_minimal()
+
+#Density Plot – Home Goals by Match Outcome
+ggplot(seriea, aes(x = HomeGoals, colour = HomeResult)) +
+  geom_density(linewidth = 1.2) +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Serie A: Home Goals by Match Result (Pre vs Post VAR)",
+       x = "Goals", y = "Density") +
+  theme_minimal()
+
+#Total Home vs Away Goals by Period
+goals_period <- seriea %>%
+  group_by(VAR_Period) %>%
+  summarise(HomeGoals = sum(HomeGoals), AwayGoals = sum(AwayGoals)) %>%
+  pivot_longer(cols = c(HomeGoals, AwayGoals), names_to = "GoalType", values_to = "Goals")
+
+ggplot(goals_period, aes(x = VAR_Period, y = Goals, fill = GoalType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Serie A: Total Home vs Away Goals (Pre vs Post VAR)",
+       x = "VAR Period", y = "Total Goals") +
+  theme_minimal()
+
+#Avg Goals per Team (Faceted)
+team_avg_var <- seriea %>%
+  group_by(HomeTeam, VAR_Period) %>%
+  summarise(Home = mean(HomeGoals, na.rm = TRUE)) %>%
+  inner_join(
+    seriea %>% group_by(AwayTeam, VAR_Period) %>%
+      summarise(Away = mean(AwayGoals, na.rm = TRUE)),
+    by = c("HomeTeam" = "AwayTeam", "VAR_Period")
+  ) %>%
+  mutate(Avg = Home + Away)
+
+ggplot(team_avg_var, aes(x = reorder(HomeTeam, Avg), y = Avg)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  coord_flip() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Serie A: Avg Goals per Team (Pre vs Post VAR)",
+       x = "Team", y = "Avg Goals") +
+  theme_minimal()
+
+#Correlation Matrix Comparison
+pre_var <- seriea %>%
+  filter(VAR_Period == "Pre-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+post_var <- seriea %>%
+  filter(VAR_Period == "Post-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+par(mfrow = c(1, 2))
+corrplot(cor(pre_var), method = "color", type = "upper",
+         tl.col = "black", title = "Pre-VAR Correlation", mar = c(0, 0, 1, 0))
+corrplot(cor(post_var), method = "color", type = "upper",
+         tl.col = "black", title = "Post-VAR Correlation", mar = c(0, 0, 1, 0))
+
+#Since VAR was introduced in Serie A during the 2017–2018 season, the average number of goals per match has remained stable or slightly increased. Most patterns in match outcomes and statistical relationships held steady, suggesting VAR did not disrupt the natural flow of the league. The consistent rise in goal averages hints that VAR may have helped improve fairness without reducing attacking intent.
