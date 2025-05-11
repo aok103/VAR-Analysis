@@ -1,0 +1,128 @@
+#PREMIER LEAGUE (E0 - Premier League Datasets) – VAR IMPACT ANALYSIS
+
+
+#Load Libraries
+library(tidyverse)
+library(lubridate)
+library(corrplot)
+
+
+#MERGE ALL SEASON FILES
+
+
+e0_files <- list.files(pattern = "^E0.*\\.csv$")
+epl_data <- e0_files %>%
+  lapply(read.csv, stringsAsFactors = FALSE) %>%
+  bind_rows()
+
+# Save combined file
+write.csv(epl_data, "PremierLeague_AllSeasons.csv", row.names = FALSE)
+
+
+#CLEAN & PREPARE DATA
+
+
+epl_data$Date <- dmy(epl_data$Date)
+epl_data <- epl_data %>% drop_na(HomeTeam, AwayTeam, FTHG, FTAG)
+
+#rename goal columns
+names(epl_data)[names(epl_data) == "FTHG"] <- "HomeGoals"
+names(epl_data)[names(epl_data) == "FTAG"] <- "AwayGoals"
+
+#create season column
+epl_data$Season <- ifelse(month(epl_data$Date) >= 7,
+                          paste(year(epl_data$Date), year(epl_data$Date) + 1, sep = "-"),
+                          paste(year(epl_data$Date) - 1, year(epl_data$Date), sep = "-"))
+
+#create additional variables
+epl_data <- epl_data %>%
+  mutate(TotalGoals = HomeGoals + AwayGoals,
+         HomeResult = case_when(
+           HomeGoals > AwayGoals ~ "Win",
+           HomeGoals < AwayGoals ~ "Loss",
+           TRUE ~ "Draw"
+         ),
+         VAR_Period = ifelse(Season < "2019-2020", "Pre-VAR", "Post-VAR"))
+
+
+#VAR COMPARISON PLOTS
+
+#Match Outcomes (Bar Chart Faceted by VAR)
+ggplot(epl_data, aes(x = HomeResult, fill = HomeResult)) +
+  geom_bar() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Premier League: Match Outcomes (Pre vs Post VAR)",
+       x = "Home Result", y = "Match Count") +
+  theme_minimal()
+
+#Avg Goals per Match (Bar Chart by Period)
+avg_goals_period <- epl_data %>%
+  group_by(VAR_Period) %>%
+  summarise(AvgGoals = mean(TotalGoals, na.rm = TRUE))
+
+ggplot(avg_goals_period, aes(x = VAR_Period, y = AvgGoals, fill = VAR_Period)) +
+  geom_bar(stat = "identity", width = 0.6) +
+  labs(title = "Premier League: Avg Goals per Match (Pre vs Post VAR)",
+       x = "VAR Period", y = "Average Goals per Match") +
+  theme_minimal()
+
+#Home Goals Density by Match Result
+ggplot(epl_data, aes(x = HomeGoals, colour = HomeResult)) +
+  geom_density(linewidth = 1.2) +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Premier League: Home Goals by Result (Pre vs Post VAR)",
+       x = "Home Goals", y = "Density") +
+  theme_minimal()
+
+#Total Home vs Away Goals by Period
+total_goals_period <- epl_data %>%
+  group_by(VAR_Period) %>%
+  summarise(HomeGoals = sum(HomeGoals), AwayGoals = sum(AwayGoals)) %>%
+  pivot_longer(cols = c(HomeGoals, AwayGoals),
+               names_to = "GoalType", values_to = "Goals")
+
+ggplot(total_goals_period, aes(x = VAR_Period, y = Goals, fill = GoalType)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Premier League: Total Home vs Away Goals (Pre vs Post VAR)",
+       x = "VAR Period", y = "Total Goals") +
+  theme_minimal()
+
+#Average Goals per Team (Faceted by VAR)
+epl_avg_var <- epl_data %>%
+  group_by(HomeTeam, VAR_Period) %>%
+  summarise(Home = mean(HomeGoals, na.rm = TRUE)) %>%
+  inner_join(
+    epl_data %>% group_by(AwayTeam, VAR_Period) %>%
+      summarise(Away = mean(AwayGoals, na.rm = TRUE)),
+    by = c("HomeTeam" = "AwayTeam", "VAR_Period")
+  ) %>%
+  mutate(Avg = Home + Away)
+
+ggplot(epl_avg_var, aes(x = reorder(HomeTeam, Avg), y = Avg)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  coord_flip() +
+  facet_wrap(~VAR_Period) +
+  labs(title = "Premier League: Avg Goals per Team (Pre vs Post VAR)",
+       x = "Team", y = "Avg Goals (Home + Away)") +
+  theme_minimal()
+
+#Correlation Heatmap Pre vs Post VAR
+#After VAR was introduced in the Premier League, core relationships like first-half goals leading to full-time results remained strong. There was a slight drop in the correlation between home shots and goals, possibly due to more goals being overturned or reviewed. Overall, the impact on match dynamics appears subtle rather than drastic.
+library(gridExtra)
+
+pre_var <- epl_data %>%
+  filter(VAR_Period == "Pre-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+post_var <- epl_data %>%
+  filter(VAR_Period == "Post-VAR") %>%
+  select(HomeGoals, AwayGoals, HTHG, HTAG, HS) %>%
+  drop_na()
+
+par(mfrow = c(1, 2))
+corrplot(cor(pre_var), method = "color", type = "upper", tl.col = "black",
+         title = "Pre-VAR Correlation", mar = c(0,0,1,0))
+corrplot(cor(post_var), method = "color", type = "upper", tl.col = "black",
+         title = "Post-VAR Correlation", mar = c(0,0,1,0))
+
